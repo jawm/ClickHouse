@@ -1,3 +1,25 @@
+option(ENABLE_LMDB "Enable LMDB" ${ENABLE_LIBRARIES})
+if (ENABLE_LMDB)
+    message(STATUS "Using LMDB")
+    set(LMDB_SOURCE_DIR "${ClickHouse_SOURCE_DIR}/contrib/openldap/libraries/liblmdb")
+
+    set(_lmdb_srcs
+        "${LMDB_SOURCE_DIR}/mdb.c"
+        "${LMDB_SOURCE_DIR}/midl.c"
+    )
+
+    add_library(_lmdb
+        ${_lmdb_srcs}
+    )
+
+    target_include_directories(_lmdb BEFORE PUBLIC "${LMDB_SOURCE_DIR}")
+    target_include_directories(_lmdb SYSTEM PUBLIC "${LMDB_SOURCE_DIR}")
+    target_include_directories(_lmdb PRIVATE "${LMDB_SOURCE_DIR}")
+    target_include_directories(_lmdb PUBLIC "${LMDB_SOURCE_DIR}")
+
+    add_library(ch_contrib::lmdb ALIAS _lmdb)
+endif()
+
 option (ENABLE_LDAP "Enable LDAP" ${ENABLE_LIBRARIES})
 
 if (NOT ENABLE_LDAP)

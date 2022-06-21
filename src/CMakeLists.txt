@@ -447,6 +447,12 @@ endif ()
 if (TARGET ch_contrib::ldap)
     dbms_target_link_libraries (PRIVATE ch_contrib::ldap ch_contrib::lber)
 endif ()
+
+if (TARGET ch_contrib::lmdb)
+    message("DBMS LMDB")
+    dbms_target_link_libraries (PRIVATE ch_contrib::lmdb)
+    target_link_libraries (clickhouse_common_io PUBLIC ch_contrib::lmdb)
+endif ()
 dbms_target_link_libraries (PRIVATE ch_contrib::sparsehash)
 
 if (TARGET ch_contrib::protobuf)
