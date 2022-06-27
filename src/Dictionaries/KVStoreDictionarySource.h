@@ -27,6 +27,9 @@
 namespace DB
 {
 
+/** KVStoreSource performs lookups in the store for a number of keys
+  * It is generic over `KVStore`, which allows various key-value storage backends to be plugged in.
+  */
 template<typename KVStore>
 class KVStoreSource final : public SourceWithProgress{
 public:
@@ -55,6 +58,8 @@ private:
     KVStore store;
 };
 
+/** KVStore is superclass for key-value store providers
+  */
 class KVStore {
 public:
   explicit KVStore(size_t max_block_size_)
@@ -66,6 +71,7 @@ public:
       return max_block_size;
   }
 
+  // lookup should make a lookup to the backend. Return null if the entry isn't found
   virtual std::unique_ptr<DB::ReadBuffer> lookup(std::string & key) = 0;
 
   virtual ~KVStore() = default;
@@ -74,6 +80,11 @@ private:
 };
 
 #if USE_LMDB
+/** KVStoreLMDB is a provider for KVStoreSource which pulls from LMDB.
+  * Records must be stored in a CSV format. Fields encoded including the key, in the order defined in the structure.
+  * They should be indexed using keys in their string format.
+  * We search in the database `dbname`.
+  */
 class KVStoreLMDB : public KVStore {
 public:
   KVStoreLMDB(std::string path, UInt64 mapsize, std::string dbname);
@@ -91,8 +102,8 @@ private:
 #endif
 
 
-/** KVStoreDictionarySource allows loading data from a KVStore dictionary on disk.
-  * TODO document thoroughly
+/** KVStoreDictionarySource allows loading data from a key-value store
+  * It is generic over various different storage providers, such as LMDB
   */
 template <typename KVStore>
 class KVStoreDictionarySource final : public IDictionarySource
@@ -107,8 +118,10 @@ public:
     KVStoreDictionarySource(const KVStoreDictionarySource & other);
     KVStoreDictionarySource & operator=(const KVStoreDictionarySource &) = delete;
 
+    // loadAll isn't supported for this dictionary source
     Pipe loadAll() override;
 
+    // loadUpdatedAll isn't supported for this dictionary source
     Pipe loadUpdatedAll() override;
 
     Pipe loadIds(const std::vector<UInt64> & ids) override;
@@ -126,8 +139,6 @@ public:
     DictionarySourcePtr clone() const override;
 
     std::string toString() const override;
-
-    Pipe getStreamForBlock(const Block & block);
 
 private:
     const DictionaryStructure dict_struct;

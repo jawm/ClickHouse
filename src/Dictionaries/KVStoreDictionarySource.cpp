@@ -35,22 +35,21 @@ namespace DB
 
 namespace ErrorCodes
 {
-    extern const int TYPE_MISMATCH;
     extern const int LOGICAL_ERROR;
-    extern const int DICTIONARY_ACCESS_DENIED;
     extern const int UNSUPPORTED_METHOD;
     extern const int PATH_ACCESS_DENIED;
-    extern const int UNKNOWN_TYPE;
     #ifdef USE_LMDB
     extern const int LMDB_ERROR;
     #endif
 }
 
+#if USE_LMDB
 const int LMDB_MAX_BLOCK_SIZE = DEFAULT_BLOCK_SIZE;
+#endif
 
 template<typename KVStore> KVStoreSource<KVStore>::KVStoreSource(
     const Block & sample_block_,
-    const std::vector<UInt64> & ids_, // const std::vector<std::string> & keys_,
+    const std::vector<UInt64> & ids_, // TODO what if key isn't UInt64?? // const std::vector<std::string> & keys_,
     KVStore store_)
     : SourceWithProgress(sample_block_)
     , sample_block(sample_block_)
@@ -63,15 +62,14 @@ template<typename KVStore> KVStoreSource<KVStore>::KVStoreSource(
 template<typename KVStore> Chunk KVStoreSource<KVStore>::generate()
 {
     if (keys.empty() || sample_block.rows() == 0 || cursor >= keys.size())
-    all_read = true;
+        all_read = true;
 
     if (all_read)
         return {};
 
     EmptyReadBuffer empty;
-    const FormatSettings format_settings; // TODO idk if we should let people supply this in the config??
-    const RowInputFormatParams params{LMDB_MAX_BLOCK_SIZE};
-    // CSVRowInputFormat csv(sample_block, empty, params, false, false, format_settings);
+    const FormatSettings format_settings; // TODO idk if we should let people supply this in the config?? Probably not
+    const RowInputFormatParams params{store.maxBlockSize()};
     StreamingFormatExecutor executor(sample_block, std::make_shared<CSVRowInputFormat>(sample_block, empty, params, false, false, format_settings));
     
     size_t final_idx = cursor + std::min(store.maxBlockSize(), keys.size() - cursor);
@@ -85,29 +83,29 @@ template<typename KVStore> Chunk KVStoreSource<KVStore>::generate()
     }
 
     auto cols = executor.getResultColumns();
-
     size_t num_rows = cols.at(0)->size();
-
-    std::cerr << "ROW COUNT " << num_rows << "::::::" << std::endl;
 
     return Chunk(std::move(cols), num_rows);
 
 }
 
-#ifdef USE_LMDB
+#if USE_LMDB
 KVStoreLMDB::KVStoreLMDB(std::string path_, size_t mapsize, std::string dbname)
     : KVStore(LMDB_MAX_BLOCK_SIZE)
     , path(path_)
 {
-    // TODO open db, make txn etc
     if (int res = mdb_env_create(&env)) {
         throw Exception(ErrorCodes::LMDB_ERROR, "LMDB Error creating env: {}", res);
     }
 
-    
+    // We only open a single database for our dictionary.
+    if (int res = mdb_env_set_maxdbs(env, 1)) {
+        throw Exception(ErrorCodes::LMDB_ERROR, "LMDB error setting maxdbs for env: {}", res);
+    }
 
-    mdb_env_set_maxdbs(env, 100);
-    mdb_env_set_mapsize(env, mapsize);
+    if (int res = mdb_env_set_mapsize(env, mapsize)) {
+        throw Exception(ErrorCodes::LMDB_ERROR, "LMDB error setting mapsize for env: {}", res);
+    }
 
     if (int res = mdb_env_open(env, path.c_str(), MDB_NOTLS | MDB_RDONLY, 0664)) {
         throw Exception(ErrorCodes::LMDB_ERROR, "LMDB Failed to open env: {}", res);
@@ -175,11 +173,6 @@ template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadIds(const 
 {
     LOG_TRACE(log, "loadIds {} size = {}", toString(), ids.size());
 
-    // std::vector<std::string> keys;
-    // keys.reserve(ids.size());
-    // for (UInt64 id : ids)
-    //         keys.emplace_back("zone::" + DB::toString(id) + "::zone_plan"); // TODO hmm
-
     std::cerr << "loadIDS" << ids[0] << "::::::" << std::endl;
 
     return Pipe(std::make_shared<KVStoreSource<KVStore>>(
@@ -235,7 +228,6 @@ void registerDictionarySourceKVStore(DictionarySourceFactory & factory)
                                  const std::string & /* default_database */,
                                  bool created_from_ddl) -> DictionarySourcePtr
     {
-        // TODO need this?
         if (dict_struct.has_expressions)
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Dictionary source of type `KVStore` does not support attribute expressions");
 
@@ -243,9 +235,9 @@ void registerDictionarySourceKVStore(DictionarySourceFactory & factory)
 
         String settings_config_prefix = config_prefix + ".KVStore";
 
-        const std::string provider = config.getString(settings_config_prefix + ".provider");
+        const std::string store = config.getString(settings_config_prefix + ".store");
         
-        if (provider == "LMDB") {
+        if (store == "LMDB") {
             #ifdef USE_LMDB
             const std::string path = config.getString(settings_config_prefix + ".path");
             size_t mapsize = 32 * 1024 * 1024 * 1024l; // Default 32 GiB
@@ -257,18 +249,18 @@ void registerDictionarySourceKVStore(DictionarySourceFactory & factory)
             if (created_from_ddl && !fileOrSymlinkPathStartsWith(path, user_files_path))
                 throw Exception(ErrorCodes::PATH_ACCESS_DENIED, "File path {} is not inside {}", path, user_files_path);
             
-            KVStoreLMDB store (
+            KVStoreLMDB kvstore (
                 path,
                 mapsize,
                 config.getString(settings_config_prefix + ".dbname")
             );
-            return std::make_unique<KVStoreDictionarySource<KVStoreLMDB>>(dict_struct, store, sample_block);
+            return std::make_unique<KVStoreDictionarySource<KVStoreLMDB>>(dict_struct, kvstore, sample_block);
             #else
             throw Exception(ErrorCodes::FEATURE_IS_NOT_ENABLED_AT_BUILD_TIME, "LMDB not compiled into this instance of ClickHouse, can't use LMDB KVStore dictionary");
             #endif
         } else {
             throw Exception(ErrorCodes::BAD_ARGUMENTS,
-                "{}: Unknown provider.", provider);
+                "{}: Unknown provider.", store);
         }
     };
 
