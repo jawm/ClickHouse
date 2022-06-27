@@ -20,29 +20,32 @@
 #include <IO/ReadHelpers.h>
 #include <IO/WriteHelpers.h>
 
+#if USE_LMDB
+#include <lmdb.h>
+#endif
 
 namespace DB
 {
 
     
 
-template<typename Lookup>
-class EmbeddedSource final : public SourceWithProgress{
+template<typename KVStore>
+class KVStoreSource final : public SourceWithProgress{
 public:
 
-    EmbeddedSource(
+    KVStoreSource(
         ContextPtr context_,
         const Block & sample_block_,
         const std::vector<UInt64> & ids, // const std::vector<std::string> & keys_,
-        Lookup lookup_);
+        KVStore store_);
 
-    ~EmbeddedSource() override = default;
+    ~KVStoreSource() override = default;
 
 protected:
 
     Chunk generate() override;
 
-    String getName() const override { return "Embedded"; }
+    String getName() const override { return "KVStore"; }
 
 private:
     size_t cursor = 0;
@@ -53,16 +56,16 @@ private:
     ContextPtr context;
     Block sample_block;
     std::vector<UInt64> keys;
-    Lookup lookup;
+    KVStore store;
 };
 
-class Lookup {
+class KVStore {
 public:
-  explicit Lookup(std::string path_, size_t max_block_size_)
+  explicit KVStore(std::string path_, size_t max_block_size_)
     : path(path_)
     , max_block_size(max_block_size_) {}
 
-  Lookup(const Lookup & other) = default;
+  KVStore(const KVStore & other) = default;
 
   std::string getPath() {
     return path;
@@ -74,23 +77,21 @@ public:
 
   virtual std::unique_ptr<DB::ReadBuffer> lookup(std::string & key) = 0;
 
-  virtual ~Lookup() = default;
+  virtual ~KVStore() = default;
 private:
   std::string path;
   size_t max_block_size;
 };
 
 #if USE_LMDB
-#include <lmdb.h>
-class LookupLMDB : public Lookup {
+class KVStoreLMDB : public KVStore {
 public:
-  LookupLMDB(std::string path, UInt64 mapsize, std::string dbname);
-  ~LookupLMDB() override = default;
+  KVStoreLMDB(std::string path, UInt64 mapsize, std::string dbname);
+  ~KVStoreLMDB() override = default;
 
-  LookupLMDB(const LookupLMDB & other);
+  KVStoreLMDB(const KVStoreLMDB & other); // TODO should we have copy constructor?
 
   std::unique_ptr<DB::ReadBuffer> lookup(std::string & key) override;
-
 private:
   MDB_env *env;
   MDB_dbi dbi;
@@ -99,23 +100,23 @@ private:
 #endif
 
 
-/** EmbeddedDictionarySource allows loading data from an embedded dictionary on disk.
+/** KVStoreDictionarySource allows loading data from an KVStore dictionary on disk.
   * TODO document thoroughly
   */
-template <typename Lookup>
-class EmbeddedDictionarySource final : public IDictionarySource
+template <typename KVStore>
+class KVStoreDictionarySource final : public IDictionarySource
 {
 public:
     
-    EmbeddedDictionarySource(
+    KVStoreDictionarySource(
         const DictionaryStructure & dict_struct_,
-        Lookup lookup_,
+        KVStore store_,
         Block & sample_block_,
         ContextPtr context_,
         bool created_from_ddl);
 
-    EmbeddedDictionarySource(const EmbeddedDictionarySource & other);
-    EmbeddedDictionarySource & operator=(const EmbeddedDictionarySource &) = delete;
+    KVStoreDictionarySource(const KVStoreDictionarySource & other);
+    KVStoreDictionarySource & operator=(const KVStoreDictionarySource &) = delete;
 
     Pipe loadAll() override;
 
@@ -145,7 +146,7 @@ public:
 
 private:
     const DictionaryStructure dict_struct;
-    Lookup lookup;
+    KVStore store;
 
     Block sample_block;
     ContextPtr context;

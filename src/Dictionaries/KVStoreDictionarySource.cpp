@@ -1,4 +1,4 @@
-#include "EmbeddedDictionarySource.h"
+#include "KVStoreDictionarySource.h"
 
 #include <filesystem>
 #include <optional>
@@ -48,21 +48,21 @@ namespace ErrorCodes
 
 const int LMDB_MAX_BLOCK_SIZE = DEFAULT_BLOCK_SIZE;
 
-template<typename Lookup> EmbeddedSource<Lookup>::EmbeddedSource(
+template<typename KVStore> KVStoreSource<KVStore>::KVStoreSource(
     ContextPtr context_,
     const Block & sample_block_,
     const std::vector<UInt64> & ids_, // const std::vector<std::string> & keys_,
-    Lookup lookup_)
+    KVStore store_)
     : SourceWithProgress(sample_block_)
     , context(context_)
     , sample_block(sample_block_)
     , keys(ids_)
-    , lookup(lookup_)
+    , store(store_)
 {
     description.init(sample_block);
 }
 
-template<typename Lookup> Chunk EmbeddedSource<Lookup>::generate()
+template<typename KVStore> Chunk KVStoreSource<KVStore>::generate()
 {
     if (keys.empty() || sample_block.rows() == 0 || cursor >= keys.size())
     all_read = true;
@@ -76,11 +76,11 @@ template<typename Lookup> Chunk EmbeddedSource<Lookup>::generate()
     // CSVRowInputFormat csv(sample_block, empty, params, false, false, format_settings);
     StreamingFormatExecutor executor(sample_block, std::make_shared<CSVRowInputFormat>(sample_block, empty, params, false, false, format_settings));
     
-    size_t final_idx = cursor + std::min(lookup.maxBlockSize(), keys.size() - cursor);
+    size_t final_idx = cursor + std::min(store.maxBlockSize(), keys.size() - cursor);
     for (; cursor < final_idx; ++cursor)
     {
         std::string key = std::to_string(keys[cursor]);
-        std::unique_ptr<ReadBuffer> s = lookup.lookup(key);
+        std::unique_ptr<ReadBuffer> s = store.lookup(key);
         if (!s)
             continue; // The key wasn't found
         executor.execute(*s);
@@ -97,8 +97,8 @@ template<typename Lookup> Chunk EmbeddedSource<Lookup>::generate()
 }
 
 #ifdef USE_LMDB
-LookupLMDB::LookupLMDB(std::string path_, size_t mapsize, std::string dbname)
-    : Lookup(path_, LMDB_MAX_BLOCK_SIZE)
+KVStoreLMDB::KVStoreLMDB(std::string path_, size_t mapsize, std::string dbname)
+    : KVStore(path_, LMDB_MAX_BLOCK_SIZE)
 {    
     // TODO open db, make txn etc
     if (int res = mdb_env_create(&env)) {
@@ -121,9 +121,9 @@ LookupLMDB::LookupLMDB(std::string path_, size_t mapsize, std::string dbname)
     }
 }
 
-LookupLMDB::LookupLMDB(const LookupLMDB & other) = default;
+KVStoreLMDB::KVStoreLMDB(const KVStoreLMDB & other) = default;
 
-std::unique_ptr<DB::ReadBuffer> LookupLMDB::lookup(std::string & key) {
+std::unique_ptr<DB::ReadBuffer> KVStoreLMDB::lookup(std::string & key) {
     MDB_val key_val = {
         static_cast<size_t>(key.size()),
         static_cast<void *>(key.data()),
@@ -142,43 +142,43 @@ std::unique_ptr<DB::ReadBuffer> LookupLMDB::lookup(std::string & key) {
 }
 #endif
 
-template<typename Lookup> EmbeddedDictionarySource<Lookup>::EmbeddedDictionarySource(
+template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySource(
     const DictionaryStructure & dict_struct_,
-    Lookup lookup_,
+    KVStore store_,
     Block & sample_block_,
     ContextPtr context_,
     bool created_from_ddl)
     : dict_struct(dict_struct_)
-    , lookup(lookup_)
+    , store(store_)
     , sample_block(sample_block_)
     , context(context_)
-    , log(&Poco::Logger::get("EmbeddedDictionarySource"))
+    , log(&Poco::Logger::get("KVStoreDictionarySource"))
 {
     auto user_files_path = context->getUserFilesPath();
-    if (created_from_ddl && !fileOrSymlinkPathStartsWith(lookup.getPath(), user_files_path))
-        throw Exception(ErrorCodes::PATH_ACCESS_DENIED, "File path {} is not inside {}", lookup.getPath(), user_files_path);
+    if (created_from_ddl && !fileOrSymlinkPathStartsWith(store.getPath(), user_files_path))
+        throw Exception(ErrorCodes::PATH_ACCESS_DENIED, "File path {} is not inside {}", store.getPath(), user_files_path);
 }
 
-template<typename Lookup> EmbeddedDictionarySource<Lookup>::EmbeddedDictionarySource(const EmbeddedDictionarySource & other)
+template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySource(const KVStoreDictionarySource & other)
     : dict_struct(other.dict_struct)
-    , lookup(other.lookup)
+    , store(other.store)
     , sample_block(other.sample_block)
     , context(Context::createCopy(other.context))
-    , log(&Poco::Logger::get("EmbeddedDictionarySource"))
+    , log(&Poco::Logger::get("KVStoreDictionarySource"))
 {
 }
 
-template<typename Lookup> Pipe EmbeddedDictionarySource<Lookup>::loadAll()
+template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadAll()
 {
     throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "ExecutablePoolDictionarySource does not support loadAll method");
 }
 
-template<typename Lookup> Pipe EmbeddedDictionarySource<Lookup>::loadUpdatedAll()
+template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadUpdatedAll()
 {
     throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "ExecutablePoolDictionarySource does not support loadUpdatedAll method");
 }
 
-template<typename Lookup> Pipe EmbeddedDictionarySource<Lookup>::loadIds(const std::vector<UInt64> & ids)
+template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadIds(const std::vector<UInt64> & ids)
 {
     LOG_TRACE(log, "loadIds {} size = {}", toString(), ids.size());
 
@@ -189,16 +189,19 @@ template<typename Lookup> Pipe EmbeddedDictionarySource<Lookup>::loadIds(const s
 
     std::cerr << "loadIDS" << ids[0] << "::::::" << std::endl;
 
-    return Pipe(std::make_shared<EmbeddedSource<Lookup>>(
+    return Pipe(std::make_shared<KVStoreSource<KVStore>>(
             context,
             sample_block,
-            ids, // std::move(keys),
-            lookup));
+            ids,
+            store));
 }
 
 
-template<typename Lookup> Pipe EmbeddedDictionarySource<Lookup>::loadKeys(const Columns &  /*key_columns*/, const std::vector<size_t> &  /*requested_rows*/)
+template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadKeys(const Columns &  /*key_columns*/, const std::vector<size_t> &  /*requested_rows*/)
 {
+
+    // TODO figure this out
+
     // LOG_TRACE(log, "loadKeys {} size = {}", toString(), requested_rows.size());
 
     // // TODO
@@ -207,30 +210,30 @@ template<typename Lookup> Pipe EmbeddedDictionarySource<Lookup>::loadKeys(const 
     throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "ExecutablePoolDictionarySource does not support loadKeys method");
 }
 
-template<typename Lookup> bool EmbeddedDictionarySource<Lookup>::isModified() const
+template<typename KVStore> bool KVStoreDictionarySource<KVStore>::isModified() const
 {
     return true;
 }
 
-template<typename Lookup> bool EmbeddedDictionarySource<Lookup>::hasUpdateField() const
+template<typename KVStore> bool KVStoreDictionarySource<KVStore>::hasUpdateField() const
 {
     return false;
 }
 
-template<typename Lookup> DictionarySourcePtr EmbeddedDictionarySource<Lookup>::clone() const
+template<typename KVStore> DictionarySourcePtr KVStoreDictionarySource<KVStore>::clone() const
 {
-    return std::make_shared<EmbeddedDictionarySource>(*this);
+    return std::make_shared<KVStoreDictionarySource>(*this);
 }
 
 #ifdef USE_LMDB
-template<> std::string EmbeddedDictionarySource<LookupLMDB>::toString() const
+template<> std::string KVStoreDictionarySource<KVStoreLMDB>::toString() const
 {
     // TODO figure out what to put in this
-    return "Embedded dictionary, provider=LMDB";
+    return "KVStore dictionary, provider=LMDB";
 }
 #endif
 
-void registerDictionarySourceEmbedded(DictionarySourceFactory & factory)
+void registerDictionarySourceKVStore(DictionarySourceFactory & factory)
 {
     auto create_table_source = [=](const DictionaryStructure & dict_struct,
                                  const Poco::Util::AbstractConfiguration & config,
@@ -242,11 +245,11 @@ void registerDictionarySourceEmbedded(DictionarySourceFactory & factory)
     {
         // TODO need this?
         if (dict_struct.has_expressions)
-            throw Exception(ErrorCodes::LOGICAL_ERROR, "Dictionary source of type `embedded` does not support attribute expressions");
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Dictionary source of type `KVStore` does not support attribute expressions");
 
         ContextMutablePtr context = copyContextAndApplySettingsFromDictionaryConfig(global_context, config, config_prefix);
 
-        String settings_config_prefix = config_prefix + ".embedded";
+        String settings_config_prefix = config_prefix + ".KVStore";
 
         const std::string provider = config.getString(settings_config_prefix + ".provider");
         const std::string path = config.getString(settings_config_prefix + ".path");
@@ -256,14 +259,14 @@ void registerDictionarySourceEmbedded(DictionarySourceFactory & factory)
             size_t mapsize = 32 * 1024 * 1024 * 1024l;
             if (config.has(settings_config_prefix + ".mapsize"))
                 mapsize = config.getInt64(settings_config_prefix + ".mapsize");
-            LookupLMDB lookup (
+            KVStoreLMDB lookup (
                 path,
                 mapsize,
                 config.getString(settings_config_prefix + ".dbname")
             );
-            return std::make_unique<EmbeddedDictionarySource<LookupLMDB>>(dict_struct, lookup, sample_block, context, created_from_ddl);
+            return std::make_unique<KVStoreDictionarySource<KVStoreLMDB>>(dict_struct, lookup, sample_block, context, created_from_ddl);
             #else
-            throw Exception(ErrorCodes::FEATURE_IS_NOT_ENABLED_AT_BUILD_TIME, "LMDB not compiled into this instance of ClickHouse, can't use LMDB embedded dictionary");
+            throw Exception(ErrorCodes::FEATURE_IS_NOT_ENABLED_AT_BUILD_TIME, "LMDB not compiled into this instance of ClickHouse, can't use LMDB KVStore dictionary");
             #endif
         } else {
             throw Exception(ErrorCodes::BAD_ARGUMENTS,
@@ -271,7 +274,7 @@ void registerDictionarySourceEmbedded(DictionarySourceFactory & factory)
         }
     };
 
-    factory.registerSource("embedded", create_table_source);
+    factory.registerSource("KVStore", create_table_source);
 }
 
 }

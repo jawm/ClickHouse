@@ -19,7 +19,7 @@ void registerDictionarySourceExecutable(DictionarySourceFactory & source_factory
 void registerDictionarySourceExecutablePool(DictionarySourceFactory & source_factory);
 void registerDictionarySourceHTTP(DictionarySourceFactory & source_factory);
 void registerDictionarySourceLibrary(DictionarySourceFactory & source_factory);
-void registerDictionarySourceEmbedded(DictionarySourceFactory & source_factory);
+void registerDictionarySourceKVStore(DictionarySourceFactory & source_factory);
 
 class DictionaryFactory;
 void registerDictionaryRangeHashed(DictionaryFactory & factory);
@@ -31,7 +31,6 @@ void registerDictionaryArrayHashed(DictionaryFactory & factory);
 void registerDictionaryCache(DictionaryFactory & factory);
 void registerDictionaryPolygon(DictionaryFactory & factory);
 void registerDictionaryDirect(DictionaryFactory & factory);
-void registerDictionaryEmbedded(DictionaryFactory & factory);
 
 
 void registerDictionaries()
@@ -51,7 +50,7 @@ void registerDictionaries()
         registerDictionarySourceExecutablePool(source_factory);
         registerDictionarySourceHTTP(source_factory);
         registerDictionarySourceLibrary(source_factory);
-        registerDictionarySourceEmbedded(source_factory);
+        registerDictionarySourceKVStore(source_factory);
     }
 
     {
