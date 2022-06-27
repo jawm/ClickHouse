@@ -10,6 +10,8 @@
 #include <Common/LocalDateTime.h>
 #include <Common/filesystemHelpers.h>
 #include <Common/ShellCommand.h>
+#include <IO/EmptyReadBuffer.h>
+#include "IO/ReadBuffer.h"
 #include "Processors/Executors/PipelineExecutor.h"
 #include "Processors/Executors/StreamingFormatExecutor.h"
 #include "Processors/Formats/IRowInputFormat.h"
@@ -44,82 +46,7 @@ namespace ErrorCodes
     #endif
 }
 
-namespace {
-    const int LMDB_MAX_BLOCK_SIZE = DEFAULT_BLOCK_SIZE;
-
-    using ValueType = ExternalResultDescription::ValueType;
-
-    template <typename T>
-    inline void insert(IColumn & column, const String & string_value)
-    {
-        assert_cast<ColumnVector<T> &>(column).insertValue(parse<T>(string_value));
-    }
-
-    void insertValue(IColumn & column, const ValueType type, const std::string & string_value)
-    {
-        if (string_value.empty())
-            throw Exception(ErrorCodes::TYPE_MISMATCH, "Type mismatch, expected not Null String");
-
-        switch (type)
-        {
-            case ValueType::vtUInt8:
-                insert<UInt8>(column, string_value);
-                break;
-            case ValueType::vtUInt16:
-                insert<UInt16>(column, string_value);
-                break;
-            case ValueType::vtUInt32:
-                insert<UInt32>(column, string_value);
-                break;
-            case ValueType::vtUInt64:
-                insert<UInt64>(column, string_value);
-                break;
-            case ValueType::vtInt8:
-                insert<Int8>(column, string_value);
-                break;
-            case ValueType::vtInt16:
-                insert<Int16>(column, string_value);
-                break;
-            case ValueType::vtInt32:
-                insert<Int32>(column, string_value);
-                break;
-            case ValueType::vtInt64:
-                insert<Int64>(column, string_value);
-                break;
-            case ValueType::vtFloat32:
-                insert<Float32>(column, string_value);
-                break;
-            case ValueType::vtFloat64:
-                insert<Float64>(column, string_value);
-                break;
-            case ValueType::vtEnum8:
-            case ValueType::vtEnum16:
-            case ValueType::vtString:
-                assert_cast<ColumnString &>(column).insert(parse<String>(string_value));
-                break;
-            case ValueType::vtDate:
-                assert_cast<ColumnUInt16 &>(column).insertValue(parse<LocalDate>(string_value).getDayNum());
-                break;
-            case ValueType::vtDateTime:
-            {
-                ReadBufferFromString in(string_value);
-                time_t time = 0;
-                readDateTimeText(time, in);
-                if (time < 0)
-                    time = 0;
-                assert_cast<ColumnUInt32 &>(column).insertValue(time);
-                break;
-            }
-            case ValueType::vtUUID:
-                assert_cast<ColumnUUID &>(column).insertValue(parse<UUID>(string_value));
-                break;
-            default:
-                throw Exception(ErrorCodes::UNKNOWN_TYPE,
-                    "Value of unsupported type: {}",
-                    column.getName());
-        }
-    }
-}
+const int LMDB_MAX_BLOCK_SIZE = DEFAULT_BLOCK_SIZE;
 
 template<typename Lookup> EmbeddedSource<Lookup>::EmbeddedSource(
     ContextPtr context_,
@@ -143,80 +70,29 @@ template<typename Lookup> Chunk EmbeddedSource<Lookup>::generate()
     if (all_read)
         return {};
 
-    const size_t size = sample_block.columns();
-    MutableColumns columns(size);
-
-    for (size_t i = 0; i < size; ++i)
-        columns[i] = sample_block.getByPosition(i).column->cloneEmpty();
-
-    const auto insert_value_by_idx = [this, &columns](size_t idx, const auto & value)
-    {
-        if (description.types[idx].second)
-        {
-            ColumnNullable & column_nullable = static_cast<ColumnNullable &>(*columns[idx]);
-            insertValue(column_nullable.getNestedColumn(), description.types[idx].first, value);
-            column_nullable.getNullMapData().emplace_back(0);
-        }
-        else
-            insertValue(*columns[idx], description.types[idx].first, value);
-    };
-
-    // ReadBuffer s();
-    // const FormatSettings format_settings; // TODO idk if we should let people supply this in the config??
-    // auto input_format = FormatFactory::instance().getInput("CSV", s, sample_block, context, LMDB_MAX_BLOCK_SIZE, format_settings);
-    // StreamingFormatExecutor executor(non_virtual_header, input_format);
-
-    CSVRowInputFormat * f;
-
+    EmptyReadBuffer empty;
+    const FormatSettings format_settings; // TODO idk if we should let people supply this in the config??
+    const RowInputFormatParams params{LMDB_MAX_BLOCK_SIZE};
+    // CSVRowInputFormat csv(sample_block, empty, params, false, false, format_settings);
+    StreamingFormatExecutor executor(sample_block, std::make_shared<CSVRowInputFormat>(sample_block, empty, params, false, false, format_settings));
+    
     size_t final_idx = cursor + std::min(lookup.maxBlockSize(), keys.size() - cursor);
     for (; cursor < final_idx; ++cursor)
     {
-        size_t found = 0;
-        auto names = sample_block.getNames();
-        for (size_t i=1; i < names.size(); i++) {
-            std::ostringstream oss;
-            oss << keys[cursor] << "::" << names[i];
-            std::string key = oss.str();
-            
-            auto s = lookup.lookup(key);
-
-            
-
-            std::cerr << "lookup: {} {}__" << key << "__asdfasdf__" << sample_block.dumpNames() << std::endl;
-            // *columns[1]->getName();
-            if (s) {
-                if (!f) {
-                    const FormatSettings format_settings; // TODO idk if we should let people supply this in the config??
-                    const RowInputFormatParams params{LMDB_MAX_BLOCK_SIZE};
-                    f = &CSVRowInputFormat(sample_block, *s, params, false, false, format_settings);
-                    CSVRowInputFormat csv(sample_block, *s, params, false, false, format_settings);
-                }
-                
-                
-                csv.readRowImpl();
-                // DB::InputFormatPtr input_format = FormatFactory::instance().getInput("CSV", s, sample_block, context, LMDB_MAX_BLOCK_SIZE, format_settings);
-                // input_format->setReadBuffer(std::move(s));
-                // StreamingFormatExecutor executor(sample_block, input_format);
-
-                // *columns[i]->insertFrom(ff, 1);
-                // found++;
-                // insert_value_by_idx(i, *s);
-            }
-            
-            if (found != i && found > 0) {
-                // We found entries for one of the columns but not another. That ain't good, panic
-                throw Exception(ErrorCodes::CANNOT_READ_ALL_DATA, "reeeeee 123123123 grepme"); // TODO pick a good error code and message
-            }
-        }
-        if (found == names.size()-1)
-            assert_cast<ColumnVector<UInt64> &>(*columns[0]).insertValue(keys[cursor]);
+        std::string key = std::to_string(keys[cursor]);
+        std::unique_ptr<ReadBuffer> s = lookup.lookup(key);
+        if (!s)
+            continue; // The key wasn't found
+        executor.execute(*s);
     }
 
-    size_t num_rows = columns.at(0)->size();
+    auto cols = executor.getResultColumns();
+
+    size_t num_rows = cols.at(0)->size();
 
     std::cerr << "ROW COUNT " << num_rows << "::::::" << std::endl;
 
-    return Chunk(std::move(columns), num_rows);
+    return Chunk(std::move(cols), num_rows);
 
 }
 
@@ -245,13 +121,7 @@ LookupLMDB::LookupLMDB(std::string path_, size_t mapsize, std::string dbname)
     }
 }
 
-LookupLMDB::LookupLMDB(const LookupLMDB & other)
-    : Lookup(other)
-    , env(other.env)
-    , dbi(other.dbi)
-    , txn(other.txn) {
-        // TODO can this be trivial?
-    }
+LookupLMDB::LookupLMDB(const LookupLMDB & other) = default;
 
 std::unique_ptr<DB::ReadBuffer> LookupLMDB::lookup(std::string & key) {
     MDB_val key_val = {
