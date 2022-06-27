@@ -49,12 +49,10 @@ namespace ErrorCodes
 const int LMDB_MAX_BLOCK_SIZE = DEFAULT_BLOCK_SIZE;
 
 template<typename KVStore> KVStoreSource<KVStore>::KVStoreSource(
-    ContextPtr context_,
     const Block & sample_block_,
     const std::vector<UInt64> & ids_, // const std::vector<std::string> & keys_,
     KVStore store_)
     : SourceWithProgress(sample_block_)
-    , context(context_)
     , sample_block(sample_block_)
     , keys(ids_)
     , store(store_)
@@ -98,17 +96,20 @@ template<typename KVStore> Chunk KVStoreSource<KVStore>::generate()
 
 #ifdef USE_LMDB
 KVStoreLMDB::KVStoreLMDB(std::string path_, size_t mapsize, std::string dbname)
-    : KVStore(path_, LMDB_MAX_BLOCK_SIZE)
-{    
+    : KVStore(LMDB_MAX_BLOCK_SIZE)
+    , path(path_)
+{
     // TODO open db, make txn etc
     if (int res = mdb_env_create(&env)) {
         throw Exception(ErrorCodes::LMDB_ERROR, "LMDB Error creating env: {}", res);
     }
 
+    
+
     mdb_env_set_maxdbs(env, 100);
     mdb_env_set_mapsize(env, mapsize);
 
-    if (int res = mdb_env_open(env, getPath().c_str(), MDB_NOTLS | MDB_RDONLY, 0664)) {
+    if (int res = mdb_env_open(env, path.c_str(), MDB_NOTLS | MDB_RDONLY, 0664)) {
         throw Exception(ErrorCodes::LMDB_ERROR, "LMDB Failed to open env: {}", res);
     }
 
@@ -145,25 +146,17 @@ std::unique_ptr<DB::ReadBuffer> KVStoreLMDB::lookup(std::string & key) {
 template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySource(
     const DictionaryStructure & dict_struct_,
     KVStore store_,
-    Block & sample_block_,
-    ContextPtr context_,
-    bool created_from_ddl)
+    Block & sample_block_)
     : dict_struct(dict_struct_)
     , store(store_)
     , sample_block(sample_block_)
-    , context(context_)
     , log(&Poco::Logger::get("KVStoreDictionarySource"))
-{
-    auto user_files_path = context->getUserFilesPath();
-    if (created_from_ddl && !fileOrSymlinkPathStartsWith(store.getPath(), user_files_path))
-        throw Exception(ErrorCodes::PATH_ACCESS_DENIED, "File path {} is not inside {}", store.getPath(), user_files_path);
-}
+{}
 
 template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySource(const KVStoreDictionarySource & other)
     : dict_struct(other.dict_struct)
     , store(other.store)
     , sample_block(other.sample_block)
-    , context(Context::createCopy(other.context))
     , log(&Poco::Logger::get("KVStoreDictionarySource"))
 {
 }
@@ -190,7 +183,6 @@ template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadIds(const 
     std::cerr << "loadIDS" << ids[0] << "::::::" << std::endl;
 
     return Pipe(std::make_shared<KVStoreSource<KVStore>>(
-            context,
             sample_block,
             ids,
             store));
@@ -252,19 +244,25 @@ void registerDictionarySourceKVStore(DictionarySourceFactory & factory)
         String settings_config_prefix = config_prefix + ".KVStore";
 
         const std::string provider = config.getString(settings_config_prefix + ".provider");
-        const std::string path = config.getString(settings_config_prefix + ".path");
-
+        
         if (provider == "LMDB") {
             #ifdef USE_LMDB
-            size_t mapsize = 32 * 1024 * 1024 * 1024l;
+            const std::string path = config.getString(settings_config_prefix + ".path");
+            size_t mapsize = 32 * 1024 * 1024 * 1024l; // Default 32 GiB
             if (config.has(settings_config_prefix + ".mapsize"))
                 mapsize = config.getInt64(settings_config_prefix + ".mapsize");
-            KVStoreLMDB lookup (
+            
+            // Verify that if this was created with DDL, the path is safe
+            auto user_files_path = context->getUserFilesPath();
+            if (created_from_ddl && !fileOrSymlinkPathStartsWith(path, user_files_path))
+                throw Exception(ErrorCodes::PATH_ACCESS_DENIED, "File path {} is not inside {}", path, user_files_path);
+            
+            KVStoreLMDB store (
                 path,
                 mapsize,
                 config.getString(settings_config_prefix + ".dbname")
             );
-            return std::make_unique<KVStoreDictionarySource<KVStoreLMDB>>(dict_struct, lookup, sample_block, context, created_from_ddl);
+            return std::make_unique<KVStoreDictionarySource<KVStoreLMDB>>(dict_struct, store, sample_block);
             #else
             throw Exception(ErrorCodes::FEATURE_IS_NOT_ENABLED_AT_BUILD_TIME, "LMDB not compiled into this instance of ClickHouse, can't use LMDB KVStore dictionary");
             #endif

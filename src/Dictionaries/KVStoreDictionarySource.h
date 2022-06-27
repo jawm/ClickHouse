@@ -27,14 +27,11 @@
 namespace DB
 {
 
-    
-
 template<typename KVStore>
 class KVStoreSource final : public SourceWithProgress{
 public:
 
     KVStoreSource(
-        ContextPtr context_,
         const Block & sample_block_,
         const std::vector<UInt64> & ids, // const std::vector<std::string> & keys_,
         KVStore store_);
@@ -53,7 +50,6 @@ private:
 
     ExternalResultDescription description;
 
-    ContextPtr context;
     Block sample_block;
     std::vector<UInt64> keys;
     KVStore store;
@@ -61,15 +57,10 @@ private:
 
 class KVStore {
 public:
-  explicit KVStore(std::string path_, size_t max_block_size_)
-    : path(path_)
-    , max_block_size(max_block_size_) {}
+  explicit KVStore(size_t max_block_size_)
+    : max_block_size(max_block_size_) {}
 
   KVStore(const KVStore & other) = default;
-
-  std::string getPath() {
-    return path;
-  }
 
   size_t maxBlockSize() const {
       return max_block_size;
@@ -79,7 +70,6 @@ public:
 
   virtual ~KVStore() = default;
 private:
-  std::string path;
   size_t max_block_size;
 };
 
@@ -93,6 +83,7 @@ public:
 
   std::unique_ptr<DB::ReadBuffer> lookup(std::string & key) override;
 private:
+  std::string path;
   MDB_env *env;
   MDB_dbi dbi;
   MDB_txn * txn;
@@ -100,7 +91,7 @@ private:
 #endif
 
 
-/** KVStoreDictionarySource allows loading data from an KVStore dictionary on disk.
+/** KVStoreDictionarySource allows loading data from a KVStore dictionary on disk.
   * TODO document thoroughly
   */
 template <typename KVStore>
@@ -111,19 +102,13 @@ public:
     KVStoreDictionarySource(
         const DictionaryStructure & dict_struct_,
         KVStore store_,
-        Block & sample_block_,
-        ContextPtr context_,
-        bool created_from_ddl);
+        Block & sample_block_);
 
     KVStoreDictionarySource(const KVStoreDictionarySource & other);
     KVStoreDictionarySource & operator=(const KVStoreDictionarySource &) = delete;
 
     Pipe loadAll() override;
 
-    /** The logic of this method is flawed, absolutely incorrect and ignorant.
-      * It may lead to skipping some values due to clock sync or timezone changes.
-      * The intended usage of "update_field" is totally different.
-      */
     Pipe loadUpdatedAll() override;
 
     Pipe loadIds(const std::vector<UInt64> & ids) override;
@@ -149,7 +134,6 @@ private:
     KVStore store;
 
     Block sample_block;
-    ContextPtr context;
     Poco::Logger * log;
 };
 
