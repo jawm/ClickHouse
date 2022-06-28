@@ -25,7 +25,7 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
     extern const int UNSUPPORTED_METHOD;
     extern const int PATH_ACCESS_DENIED;
-    #ifdef USE_LMDB
+    #if USE_LMDB
     extern const int LMDB_ERROR;
     #endif
 }
@@ -206,7 +206,7 @@ template<typename KVStore> DictionarySourcePtr KVStoreDictionarySource<KVStore>:
     return std::make_shared<KVStoreDictionarySource>(*this);
 }
 
-#ifdef USE_LMDB
+#if USE_LMDB
 template<> std::string KVStoreDictionarySource<KVStoreLMDB>::toString() const
 {
     // TODO figure out what to put in this
@@ -238,7 +238,7 @@ void registerDictionarySourceKVStore(DictionarySourceFactory & factory)
         const std::string store = config.getString(settings_config_prefix + ".store");
         
         if (store == "LMDB") {
-            #ifdef USE_LMDB
+            #if USE_LMDB
             const std::string path = config.getString(settings_config_prefix + ".path");
             size_t mapsize = 32 * 1024 * 1024 * 1024l; // Default 32 GiB
             if (config.has(settings_config_prefix + ".mapsize"))
