@@ -25,9 +25,7 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
     extern const int UNSUPPORTED_METHOD;
     extern const int PATH_ACCESS_DENIED;
-    #if USE_LMDB
     extern const int LMDB_ERROR;
-    #endif
 }
 
 #if USE_LMDB
@@ -70,7 +68,6 @@ template<typename KVStore> Chunk KVStoreSource<KVStore>::generate()
     size_t num_rows = cols.at(0)->size();
 
     return Chunk(std::move(cols), num_rows);
-
 }
 
 #if USE_LMDB
@@ -78,6 +75,8 @@ KVStoreLMDB::KVStoreLMDB(std::string path_, size_t mapsize, std::string dbname)
     : KVStore(LMDB_MAX_BLOCK_SIZE)
     , path(path_)
 {
+    // TODO include some context with these exceptions: dbname, mapsize, path etc.
+
     if (int res = mdb_env_create(&env)) {
         throw Exception(ErrorCodes::LMDB_ERROR, "LMDB Error creating env: {}", res);
     }
@@ -104,7 +103,9 @@ KVStoreLMDB::KVStoreLMDB(std::string path_, size_t mapsize, std::string dbname)
     }
 }
 
+// TODO verify it's ok to copy lmdb objects
 KVStoreLMDB::KVStoreLMDB(const KVStoreLMDB & other) = default;
+// KVStoreLMDB::KVStoreLMDB(KVStoreLMDB && other) noexcept = default;
 
 std::unique_ptr<DB::ReadBuffer> KVStoreLMDB::lookup(std::string & key) {
     MDB_val key_val = {
@@ -135,6 +136,7 @@ template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySo
     , log(&Poco::Logger::get("KVStoreDictionarySource"))
 {}
 
+// TODO default copy constructor possible?
 template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySource(const KVStoreDictionarySource & other)
     : store(other.store)
     , dict_struct(other.dict_struct)
@@ -145,12 +147,13 @@ template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySo
 
 template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadAll()
 {
-    throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "ExecutablePoolDictionarySource does not support loadAll method");
+    // This could probably be supported -- most KV stores support iteration. But it doesn't seem like it would be that useful
+    throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "KVStoreDictionarySource does not support loadAll method");
 }
 
 template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadUpdatedAll()
 {
-    throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "ExecutablePoolDictionarySource does not support loadUpdatedAll method");
+    throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "KVStoreDictionarySource does not support loadUpdatedAll method");
 }
 
 template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadIds(const std::vector<UInt64> & ids)

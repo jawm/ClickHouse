@@ -449,8 +449,8 @@ if (TARGET ch_contrib::ldap)
 endif ()
 
 if (TARGET ch_contrib::lmdb)
-    message("DBMS LMDB")
     dbms_target_link_libraries (PRIVATE ch_contrib::lmdb)
+    # TODO try to understand why this needs to be PUBLIC... compilation fails if it's PRIVATE
     target_link_libraries (clickhouse_common_io PUBLIC ch_contrib::lmdb)
 endif ()
 dbms_target_link_libraries (PRIVATE ch_contrib::sparsehash)
