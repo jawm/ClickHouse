@@ -1,34 +1,21 @@
 #include "KVStoreDictionarySource.h"
 
-#include <filesystem>
-#include <optional>
-#include <lmdb.h>
-
-#include <boost/algorithm/string/split.hpp>
-
 #include <base/logger_useful.h>
-#include <Common/LocalDateTime.h>
 #include <Common/filesystemHelpers.h>
-#include <Common/ShellCommand.h>
+#include <Common/FieldVisitorToString.h>
 #include <IO/EmptyReadBuffer.h>
 #include "IO/ReadBuffer.h"
-#include "Processors/Executors/PipelineExecutor.h"
 #include "Processors/Executors/StreamingFormatExecutor.h"
 #include "Processors/Formats/IRowInputFormat.h"
 #include "Processors/Formats/Impl/CSVRowInputFormat.h"
-#include "Processors/Sources/RemoteSource.h"
-
-#include <Processors/Formats/IOutputFormat.h>
-#include <Processors/Sources/ShellCommandSource.h>
-#include <Processors/Sources/SourceFromSingleChunk.h>
-#include <Formats/formatBlock.h>
-
 #include <Interpreters/Context.h>
-
 #include <Dictionaries/DictionarySourceFactory.h>
 #include <Dictionaries/DictionarySourceHelpers.h>
 #include <Dictionaries/DictionaryStructure.h>
 
+#if USE_LMDB
+#include <lmdb.h>
+#endif
 
 namespace DB
 {
@@ -49,15 +36,13 @@ const int LMDB_MAX_BLOCK_SIZE = DEFAULT_BLOCK_SIZE;
 
 template<typename KVStore> KVStoreSource<KVStore>::KVStoreSource(
     const Block & sample_block_,
-    const std::vector<UInt64> & ids_, // TODO what if key isn't UInt64?? // const std::vector<std::string> & keys_,
+    const std::vector<String> & keys_,
     KVStore store_)
     : SourceWithProgress(sample_block_)
     , sample_block(sample_block_)
-    , keys(ids_)
+    , keys(keys_)
     , store(store_)
-{
-    description.init(sample_block);
-}
+{}
 
 template<typename KVStore> Chunk KVStoreSource<KVStore>::generate()
 {
@@ -68,15 +53,14 @@ template<typename KVStore> Chunk KVStoreSource<KVStore>::generate()
         return {};
 
     EmptyReadBuffer empty;
-    const FormatSettings format_settings; // TODO idk if we should let people supply this in the config?? Probably not
+    const FormatSettings format_settings; // TODO idk if we should let people supply this in the config?? Probably not necessary
     const RowInputFormatParams params{store.maxBlockSize()};
     StreamingFormatExecutor executor(sample_block, std::make_shared<CSVRowInputFormat>(sample_block, empty, params, false, false, format_settings));
     
     size_t final_idx = cursor + std::min(store.maxBlockSize(), keys.size() - cursor);
     for (; cursor < final_idx; ++cursor)
     {
-        std::string key = std::to_string(keys[cursor]);
-        std::unique_ptr<ReadBuffer> s = store.lookup(key);
+        std::unique_ptr<ReadBuffer> s = store.lookup(keys[cursor]);
         if (!s)
             continue; // The key wasn't found
         executor.execute(*s);
@@ -145,15 +129,15 @@ template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySo
     const DictionaryStructure & dict_struct_,
     KVStore store_,
     Block & sample_block_)
-    : dict_struct(dict_struct_)
-    , store(store_)
+    : store(store_)
+    , dict_struct(dict_struct_)
     , sample_block(sample_block_)
     , log(&Poco::Logger::get("KVStoreDictionarySource"))
 {}
 
 template<typename KVStore> KVStoreDictionarySource<KVStore>::KVStoreDictionarySource(const KVStoreDictionarySource & other)
-    : dict_struct(other.dict_struct)
-    , store(other.store)
+    : store(other.store)
+    , dict_struct(other.dict_struct)
     , sample_block(other.sample_block)
     , log(&Poco::Logger::get("KVStoreDictionarySource"))
 {
@@ -173,26 +157,38 @@ template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadIds(const 
 {
     LOG_TRACE(log, "loadIds {} size = {}", toString(), ids.size());
 
-    std::cerr << "loadIDS" << ids[0] << "::::::" << std::endl;
+    // TODO maybe figure out if we can preallocate this or just generally be smarter
+    // Maybe instead of having a fully-realised vector of keys, you provide an iterator, allowing conversion on the fly?
+    std::vector<std::string> keys;
+    std::transform(std::begin(ids),
+                   std::end(ids),
+                   std::back_inserter(keys),
+                   [](UInt64 id){ return std::to_string(id); });
 
     return Pipe(std::make_shared<KVStoreSource<KVStore>>(
             sample_block,
-            ids,
+            keys,
             store));
 }
 
 
-template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadKeys(const Columns &  /*key_columns*/, const std::vector<size_t> &  /*requested_rows*/)
+template<typename KVStore> Pipe KVStoreDictionarySource<KVStore>::loadKeys(const Columns &  key_columns, const std::vector<size_t> &  requested_rows)
 {
+    if (key_columns.size() != dict_struct.key->size())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Attempt to lookup with the wrong number of key columns. Got: ", key_columns.size(), ", expected: ", dict_struct.key->size());
 
-    // TODO figure this out
+    std::vector<std::string> keys;
+    for (auto row : requested_rows)
+    {
+        auto rowvalue = (*key_columns[0])[row];
+        std::string k = Field::dispatch(FieldVisitorToString(), rowvalue);
+        keys.emplace_back(k);
+    }
 
-    // LOG_TRACE(log, "loadKeys {} size = {}", toString(), requested_rows.size());
-
-    // // TODO
-    // return nullptr;
-
-    throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "ExecutablePoolDictionarySource does not support loadKeys method");
+    return Pipe(std::make_shared<KVStoreSource<KVStore>>(
+            sample_block,
+            keys,
+            store));
 }
 
 template<typename KVStore> bool KVStoreDictionarySource<KVStore>::isModified() const
@@ -230,6 +226,10 @@ void registerDictionarySourceKVStore(DictionarySourceFactory & factory)
     {
         if (dict_struct.has_expressions)
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Dictionary source of type `KVStore` does not support attribute expressions");
+
+        if (dict_struct.key && dict_struct.key->size() > 1)
+            // TODO you could enable this by encoding keys in CSV format or something. We don't have this requirement though, so not implementing currently
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Dictionary source of type `KVStore` only supports complex keys with a single attribute");
 
         ContextMutablePtr context = copyContextAndApplySettingsFromDictionaryConfig(global_context, config, config_prefix);
 

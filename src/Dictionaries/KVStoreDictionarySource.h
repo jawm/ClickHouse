@@ -1,24 +1,11 @@
 #pragma once
 
 #include <base/logger_useful.h>
-
-
 #include <Core/Block.h>
-#include <Core/ExternalResultDescription.h>
 #include <Interpreters/Context.h>
-
-#include <Columns/ColumnNullable.h>
 #include <Dictionaries/IDictionarySource.h>
 #include <Dictionaries/DictionaryStructure.h>
-#include <Formats/FormatFactory.h>
 #include "Processors/Sources/SourceWithProgress.h"
-#include "base/types.h"
-
-#include <Columns/ColumnNullable.h>
-#include <Columns/ColumnString.h>
-#include <Columns/ColumnsNumber.h>
-#include <IO/ReadHelpers.h>
-#include <IO/WriteHelpers.h>
 
 #if USE_LMDB
 #include <lmdb.h>
@@ -36,7 +23,7 @@ public:
 
     KVStoreSource(
         const Block & sample_block_,
-        const std::vector<UInt64> & ids, // const std::vector<std::string> & keys_,
+        const std::vector<std::string> & keys,
         KVStore store_);
 
     ~KVStoreSource() override = default;
@@ -51,10 +38,8 @@ private:
     size_t cursor = 0;
     bool all_read = false;
 
-    ExternalResultDescription description;
-
     Block sample_block;
-    std::vector<UInt64> keys;
+    std::vector<std::string> keys;
     KVStore store;
 };
 
@@ -141,9 +126,8 @@ public:
     std::string toString() const override;
 
 private:
-    const DictionaryStructure dict_struct;
     KVStore store;
-
+    const DictionaryStructure dict_struct;
     Block sample_block;
     Poco::Logger * log;
 };
