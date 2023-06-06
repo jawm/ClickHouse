@@ -3807,6 +3807,12 @@ bool MergeTreeData::renameTempPartAndReplaceImpl(
 
     PartHierarchy hierarchy = getPartHierarchy(part->info, DataPartState::Active, lock);
 
+    if (!hierarchy.covering_parts.empty())
+    {
+        LOG_WARNING(log, "Tried to add obsolete part {} covered by {}", part->name, hierarchy.covering_parts.back());
+        return false;
+    }
+
     if (!hierarchy.intersected_parts.empty())
     {
         // Drop part|partition operation inside some transactions sees some stale snapshot from the time when transactions has been started.
