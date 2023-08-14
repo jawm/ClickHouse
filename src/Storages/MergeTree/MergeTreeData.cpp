@@ -1098,7 +1098,7 @@ void MergeTreeData::PartLoadingTree::add(const MergeTreePartInfo & info, const S
             else if (!next_info.isDisjoint(info))
             {
                 throw Exception(ErrorCodes::LOGICAL_ERROR,
-                    "Part {} intersects next part {}.  It is a bug or a result of manual intervention in the server or ZooKeeper data",
+                    "Part {} intersects next part {}. It is a bug or a result of manual intervention in the server or ZooKeeper data",
                     name, it->second->name);
             }
         }
@@ -1291,6 +1291,9 @@ MergeTreeData::LoadPartResult MergeTreeData::loadDataPart(
     }
 
     res.part->modification_time = part_disk_ptr->getLastModified(fs::path(relative_data_path) / part_name).epochTime();
+    part_disk_ptr->listFiles() {
+        part_disk_ptr->getLastModified(fs::path(relative_data_part) / part_name).epoch_time();
+    }
     res.part->loadVersionMetadata();
 
     if (res.part->wasInvolvedInTransaction())
@@ -2929,7 +2932,7 @@ void MergeTreeData::dropAllData()
         }
     }
 
-    setDataVolume(0, 0, 0);
+    setDataVolume(0, 0, 0, 0);
 
     LOG_TRACE(log, "dropAllData: done.");
 }
@@ -3769,6 +3772,12 @@ bool MergeTreeData::renameTempPartAndReplaceImpl(
 
     PartHierarchy hierarchy = getPartHierarchy(part->info, DataPartState::Active, lock);
 
+    if (!hierarchy.covering_parts.empty())
+    {
+        LOG_WARNING(log, "Tried to add obsolete part {} covered by {}", part->name, covering_part->getNameWithState());
+        return false;
+    }
+
     if (!hierarchy.intersected_parts.empty())
     {
         // Drop part|partition operation inside some transactions sees some stale snapshot from the time when transactions has been started.
@@ -4563,7 +4572,8 @@ void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy, DataPar
 
             ssize_t diff_bytes = part_copy->getBytesOnDisk() - original_active_part->getBytesOnDisk();
             ssize_t diff_rows = part_copy->rows_count - original_active_part->rows_count;
-            increaseDataVolume(diff_bytes, diff_rows, /* parts= */ 0);
+            ssize_t diff_masked_rows = part_copy->masked_rows_count - original_active_part->masked_rows_count;
+            increaseDataVolume(diff_bytes, diff_rows, diff_masked_rows, /* parts= */ 0);
 
             /// Move parts are non replicated operations, so we take lock here.
             /// All other locks are taken in StorageReplicatedMergeTree
@@ -6242,10 +6252,12 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData:
 
             size_t add_bytes = 0;
             size_t add_rows = 0;
+            size_t add_masked_rows = 0;
             size_t add_parts = 0;
 
             size_t reduce_bytes = 0;
             size_t reduce_rows = 0;
+            size_t reduce_masked_rows = 0;
             size_t reduce_parts = 0;
 
             for (const auto & part : precommitted_parts)
@@ -6277,6 +6289,7 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData:
 
                         reduce_bytes += covered_part->getBytesOnDisk();
                         reduce_rows += covered_part->rows_count;
+                        reduce_masked_rows += covered_part->masked_rows_count;
 
                         data.modifyPartState(covered_part, DataPartState::Outdated);
                         data.removePartContributionToColumnAndSecondaryIndexSizes(covered_part);
@@ -6286,6 +6299,7 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData:
 
                     add_bytes += part->getBytesOnDisk();
                     add_rows += part->rows_count;
+                    add_masked_rows += part->masked_rows_count;
                     ++add_parts;
 
                     data.modifyPartState(part, DataPartState::Active);
@@ -6303,8 +6317,9 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData:
 
             ssize_t diff_bytes = add_bytes - reduce_bytes;
             ssize_t diff_rows = add_rows - reduce_rows;
+            ssize_t diff_masked_rows = add_masked_rows - reduce_masked_rows;
             ssize_t diff_parts  = add_parts - reduce_parts;
-            data.increaseDataVolume(diff_bytes, diff_rows, diff_parts);
+            data.increaseDataVolume(diff_bytes, diff_rows, diff_masked_rows, diff_parts);
         });
     }
 
@@ -8103,25 +8118,26 @@ size_t MergeTreeData::getTotalMergesWithTTLInMergeList() const
 
 void MergeTreeData::addPartContributionToDataVolume(const DataPartPtr & part)
 {
-    increaseDataVolume(part->getBytesOnDisk(), part->rows_count, 1);
+    increaseDataVolume(part->getBytesOnDisk(), part->rows_count, -part->masked_rows_count, 1);
 }
 
 void MergeTreeData::removePartContributionToDataVolume(const DataPartPtr & part)
 {
-    increaseDataVolume(-part->getBytesOnDisk(), -part->rows_count, -1);
+    increaseDataVolume(-part->getBytesOnDisk(), -part->rows_count, part->masked_rows_count, -1);
 }
 
-void MergeTreeData::increaseDataVolume(ssize_t bytes, ssize_t rows, ssize_t parts)
+void MergeTreeData::increaseDataVolume(ssize_t bytes, ssize_t rows, ssize_t masked_rows, ssize_t parts)
 {
     total_active_size_bytes.fetch_add(bytes, std::memory_order_acq_rel);
-    total_active_size_rows.fetch_add(rows, std::memory_order_acq_rel);
+    total_active_size_rows.fetch_add(rows-masked_rows, std::memory_order_acq_rel);
     total_active_size_parts.fetch_add(parts, std::memory_order_acq_rel);
 }
 
-void MergeTreeData::setDataVolume(size_t bytes, size_t rows, size_t parts)
+void MergeTreeData::setDataVolume(size_t bytes, size_t rows, size_t masked_rows, size_t parts)
 {
     total_active_size_bytes.store(bytes, std::memory_order_release);
     total_active_size_rows.store(rows, std::memory_order_release);
+    total_active_size_rows.store(masked_rows, std::memory_order_release);
     total_active_size_parts.store(parts, std::memory_order_release);
 }
 

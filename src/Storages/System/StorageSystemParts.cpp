@@ -62,6 +62,7 @@ StorageSystemParts::StorageSystemParts(const StorageID & table_id_)
         {"secondary_indices_compressed_bytes",          std::make_shared<DataTypeUInt64>()},
         {"secondary_indices_uncompressed_bytes",        std::make_shared<DataTypeUInt64>()},
         {"secondary_indices_marks_bytes",               std::make_shared<DataTypeUInt64>()},
+        {"creation_time",                               std::make_shared<DataTypeDateTime>()},
         {"modification_time",                           std::make_shared<DataTypeDateTime>()},
         {"remove_time",                                 std::make_shared<DataTypeDateTime>()},
         {"refcount",                                    std::make_shared<DataTypeUInt32>()},
@@ -119,6 +120,7 @@ StorageSystemParts::StorageSystemParts(const StorageID & table_id_)
         {"removal_csn",                                 std::make_shared<DataTypeUInt64>()},
 
         {"has_lightweight_delete",                      std::make_shared<DataTypeUInt8>()},
+        {"deleted_rows_count",                          std::make_shared<DataTypeUInt64>()},
 
         {"last_removal_attempt_time",                    std::make_shared<DataTypeDateTime>()},
         {"removal_state",                               std::make_shared<DataTypeString>()},
@@ -179,6 +181,8 @@ void StorageSystemParts::processNextStorage(
             columns[res_index++]->insert(secondary_indexes_size.data_uncompressed);
         if (columns_mask[src_index++])
             columns[res_index++]->insert(secondary_indexes_size.marks);
+        if (columns_mask[src_index++])
+            columns[res_index++]->insert(static_cast<UInt64>(part->creation_time));
         if (columns_mask[src_index++])
             columns[res_index++]->insert(static_cast<UInt64>(part->modification_time));
 
@@ -345,6 +349,8 @@ void StorageSystemParts::processNextStorage(
             columns[res_index++]->insert(part->version.removal_csn.load(std::memory_order_relaxed));
         if (columns_mask[src_index++])
             columns[res_index++]->insert(part->hasLightweightDelete());
+        if (columns_mask[src_index++])
+            columns[res_index++]->insert(part->masked_rows_count);
         if (columns_mask[src_index++])
             columns[res_index++]->insert(static_cast<UInt64>(part->last_removal_attempt_time.load(std::memory_order_relaxed)));
         if (columns_mask[src_index++])

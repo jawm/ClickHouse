@@ -1,0 +1,6 @@
+system.parts with fresh inserted data
+all_1_1_0       100     0       0
+system.parts with lightweight deleted data
+all_1_1_0_2     100     1       1
+system.parts with optimize final data
+all_1_1_1_2     99      0       0

@@ -29,7 +29,7 @@ public:
 TEST_F(MergeTreeMetadataCacheTest, testCommon)
 {
     std::vector<String> files
-        = {"columns.txt", "checksums.txt", "primary.idx", "count.txt", "partition.dat", "minmax_p.idx", "default_compression_codec.txt"};
+        = {"columns.txt", "checksums.txt", "primary.idx", "count.txt", "delete_count.txt", "partition.dat", "minmax_p.idx", "default_compression_codec.txt"};
     String prefix = "data/test_metadata_cache/check_part_metadata_cache/201806_1_1_0_4/";
 
     for (const auto & file : files)

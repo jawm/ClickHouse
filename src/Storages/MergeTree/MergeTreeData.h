@@ -434,7 +434,7 @@ public:
 
     bool areAsynchronousInsertsEnabled() const override { return getSettings()->async_insert; }
 
-    bool supportsTrivialCountOptimization() const override { return !hasLightweightDeletedMask(); }
+    bool supportsTrivialCountOptimization() const override { return true; }
 
     NamesAndTypesList getVirtuals() const override;
 
@@ -1498,8 +1498,8 @@ private:
     void addPartContributionToDataVolume(const DataPartPtr & part);
     void removePartContributionToDataVolume(const DataPartPtr & part);
 
-    void increaseDataVolume(ssize_t bytes, ssize_t rows, ssize_t parts);
-    void setDataVolume(size_t bytes, size_t rows, size_t parts);
+    void increaseDataVolume(ssize_t bytes, ssize_t rows, ssize_t masked_rows, ssize_t parts);
+    void setDataVolume(size_t bytes, size_t rows, size_t masked_rows, size_t parts);
 
     std::atomic<size_t> total_active_size_bytes = 0;
     std::atomic<size_t> total_active_size_rows = 0;

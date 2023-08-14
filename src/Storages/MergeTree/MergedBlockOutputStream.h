@@ -79,6 +79,7 @@ private:
     NamesAndTypesList columns_list;
     IMergeTreeDataPart::MinMaxIndex minmax_idx;
     size_t rows_count = 0;
+    size_t masked_rows_count = 0;
     CompressionCodecPtr default_codec;
     WriteSettings write_settings;
 };

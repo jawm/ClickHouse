@@ -800,6 +800,7 @@ void finalizeMutatedPart(
     new_data_part->index_granularity = source_part->index_granularity;
     new_data_part->index = source_part->index;
     new_data_part->minmax_idx = source_part->minmax_idx;
+    new_data_part->creation_time = source_part->creation_time;
     new_data_part->modification_time = time(nullptr);
 
     /// Load rest projections which are hardlinked
