@@ -103,6 +103,9 @@ public:
     /// Returns number of rows from first column in block, not equal to nullptr. If no columns, returns 0.
     size_t rows() const;
 
+    /// Returns number of rows masked out by a lightweight delete, if any. Otherwise zero
+    size_t masked_rows() const;
+
     size_t columns() const { return data.size(); }
 
     /// Checks that every column in block is not nullptr and has same number of elements.

@@ -174,6 +174,8 @@ MergedBlockOutputStream::Finalizer MergedBlockOutputStream::finalizePartAsync(
        finalizer->written_files = finalizePartOnDisk(new_part, checksums);
 
     new_part->rows_count = rows_count;
+    new_part->masked_rows_count = masked_rows_count;
+    new_part->creation_time = time(nullptr); todo correct???
     new_part->modification_time = time(nullptr);
     new_part->index = writer->releaseIndexColumns();
     new_part->checksums = checksums;
@@ -201,6 +203,8 @@ MergedBlockOutputStream::WrittenFiles MergedBlockOutputStream::finalizePartOnDis
             auto count_out = new_part->getDataPartStorage().writeFile("count.txt", 4096, write_settings);
             HashingWriteBuffer count_out_hashing(*count_out);
             writeIntText(rows_count, count_out_hashing);
+            count_out_hashing.write(",", 1);
+            writeIntText(masked_rows_count, count_out_hashing);
             count_out_hashing.finalize();
             checksums.files["count.txt"].file_size = count_out_hashing.count();
             checksums.files["count.txt"].file_hash = count_out_hashing.getHash();
@@ -242,6 +246,8 @@ MergedBlockOutputStream::WrittenFiles MergedBlockOutputStream::finalizePartOnDis
             auto count_out = new_part->getDataPartStorage().writeFile("count.txt", 4096, write_settings);
             HashingWriteBuffer count_out_hashing(*count_out);
             writeIntText(rows_count, count_out_hashing);
+            count_out_hashing.write(",", 1);
+            writeIntText(masked_rows_count, count_out_hashing);
             count_out_hashing.finalize();
             checksums.files["count.txt"].file_size = count_out_hashing.count();
             checksums.files["count.txt"].file_hash = count_out_hashing.getHash();
@@ -322,11 +328,14 @@ void MergedBlockOutputStream::writeImpl(const Block & block, const IColumn::Perm
     if (!rows)
         return;
 
+    size_t masked_rows = block.masked_rows();
+
     writer->write(block, permutation);
     if (reset_columns)
         new_serialization_infos.add(block);
 
     rows_count += rows;
+    masked_rows_count += masked_rows;
 }
 
 }

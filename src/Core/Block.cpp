@@ -12,6 +12,8 @@
 #include <Columns/ColumnConst.h>
 #include <Columns/ColumnSparse.h>
 
+#include <Storages/LightweightDeleteDescription.h>
+
 #include <iterator>
 #include <base/sort.h>
 #include <boost/algorithm/string.hpp>
@@ -367,6 +369,20 @@ size_t Block::rows() const
     for (const auto & elem : data)
         if (elem.column)
             return elem.column->size();
+
+    return 0;
+}
+
+size_t Block::masked_rows() const
+{
+    for (const auto & elem : data)
+        if (elem.name == LightweightDeleteDescription::FILTER_COLUMN.name)
+        {
+            if (!elem.column)
+                throw Exception(0, "Not sure if this is possible -- column exists, but not the data");
+
+            return elem.column->getNumberOfDefaultRows();
+        }
 
     return 0;
 }

@@ -1,6 +1,7 @@
 #include "IMergeTreeDataPart.h"
 #include <Storages/MergeTree/IDataPartStorage.h>
 #include <base/types.h>
+#include <Storages/LightweightDeleteDescription.h>
 
 #include <optional>
 #include <boost/algorithm/string/join.hpp>
@@ -1151,11 +1152,30 @@ void IMergeTreeDataPart::loadRowsCount()
         auto buf = metadata_manager->read("count.txt");
         readIntText(rows_count, *buf);
         assertEOF(*buf);
+
+        if (metadata_manager->exists("delete_count.txt"))
+            auto delbuf = metadata_manager->read("delete_count.txt");
+            readIntText(masked_rows_count, *delbuf);
+        else
+        {
+            // This path is for parts written before the addition of masked_rows_count to the delete_count.txt file
+            // In that case need to calculate the value manually when part is being read
+            for (const NameAndTypePair & column : columns)
+            {
+                if (column.name == LightweightDeleteDescription::FILTER_COLUMN.name)
+                {
+                    ColumnPtr column_col = column.type->createColumn(*getSerialization(column.name));
+                    masked_rows_count = column_col->getNumberOfDefaultRows();
+                    break;
+                }
+            }
+        }
     };
 
     if (index_granularity.empty())
     {
         rows_count = 0;
+        masked_rows_count = 0;
     }
     else if (storage.format_version >= MERGE_TREE_DATA_MIN_FORMAT_VERSION_WITH_CUSTOM_PARTITIONING || part_type == Type::Compact || parent_part)
     {
@@ -1230,6 +1250,16 @@ void IMergeTreeDataPart::loadRowsCount()
 
         for (const NameAndTypePair & column : columns)
         {
+            if (column.name == LightweightDeleteDescription::FILTER_COLUMN.name)
+            {
+                ColumnPtr column_col = column.type->createColumn(*getSerialization(column.name));
+                masked_rows_count = column_col->getNumberOfDefaultRows();
+                break;
+            }
+        }
+
+        for (const NameAndTypePair & column : columns)
+        {
             ColumnPtr column_col = column.type->createColumn(*getSerialization(column.name));
             if (!column_col->isFixedAndContiguous() || column_col->lowCardinality())
                 continue;
@@ -1265,6 +1295,7 @@ void IMergeTreeDataPart::loadRowsCount()
 void IMergeTreeDataPart::appendFilesOfRowsCount(Strings & files)
 {
     files.push_back("count.txt");
+    files.push_back("delete_count.txt");
 }
 
 void IMergeTreeDataPart::loadTTLInfos()

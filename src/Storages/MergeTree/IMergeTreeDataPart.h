@@ -221,7 +221,11 @@ public:
     MergeTreeIndexGranularityInfo index_granularity_info;
 
     size_t rows_count = 0;
+    size_t masked_rows_count = 0;
 
+    /// Approximately when the part comes into existence. Calculated as the oldest modification time of a file in the part
+    time_t creation_time = 0;
+    /// Time at which the part was last changed.
     time_t modification_time = 0;
     /// When the part is removed from the working set. Changes once.
     mutable std::atomic<time_t> remove_time { std::numeric_limits<time_t>::max() };

@@ -113,6 +113,10 @@ The `move_ttl_info.expression` array is kept mostly for backward compatibility, 
 
 - `marks_size` ([UInt64](../../sql-reference/data-types/int-uint.md)) – Alias for `marks_bytes`.
 
+- `has_lightweight_delete` ([UInt8](../../sql-reference/data-types/int-uint.md)) – Flag that indicates whether the data part contains rows hidden by a lightweight delete.
+
+- `deleted_rows_count` ([UInt64](../../sql-reference/data-types/int-uint.md)) – A count of how many rows in the part are hidden by a lightweight delete. Added with `rows` it will give the total number of rows of data stored on disk.
+
 **Example**
 
 ``` sql
